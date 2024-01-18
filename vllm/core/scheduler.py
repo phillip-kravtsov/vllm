@@ -225,9 +225,10 @@ class Scheduler:
                 scheduled.append(seq_group)
 
             if scheduled or ignored_seq_groups:
-                # list[from, to]
                 sequences_to_copy: List[Tuple[Sequence, Sequence]] = []
-                for seq_group in self.waiting:
+                from typing import Set
+                sequence_groups_to_remove: Set[SequenceGroup] = set()
+                for seq_group in scheduled:
                     waiting_sequences = seq_group.get_seqs()
                     for waiting_seq in waiting_sequences:
                         waiting_seq_token_ids = tuple(waiting_seq.data.prompt_token_ids)
@@ -239,26 +240,53 @@ class Scheduler:
                                 # covered by the stuff we have cached.
                                 print('Potential cache hit of length ', len(hits))
                                 sequences_to_copy.append((cached_seq, waiting_seq))
-                for from_sequence, to_sequence in sequences_to_copy: 
-                    pass
+                                sequence_groups_to_remove.add(seq_group)
 
-                scheduler_outputs = SchedulerOutputs(
-                    scheduled_seq_groups=scheduled,
-                    prompt_run=True,
-                    num_batched_tokens=len(seq_lens) *
-                    max(seq_lens) if seq_lens else 0,
-                    blocks_to_swap_in=blocks_to_swap_in,
-                    blocks_to_swap_out=blocks_to_swap_out,
-                    blocks_to_copy=blocks_to_copy,
-                    ignored_seq_groups=ignored_seq_groups,
-                )
-                return scheduler_outputs
+                for from_sequence, to_sequence in sequences_to_copy: 
+                    print('Copying sequences')
+                    to_sequence_length = len(to_sequence.get_token_ids())
+                    print('to_seq_length', to_sequence_length, 'from_seq_length', len(from_sequence.get_token_ids()))
+
+                    from_seq_physical_blocks = self.block_manager.block_tables[from_sequence.seq_id]
+                    to_seq_physical_blocks = self.block_manager.block_tables[to_sequence.seq_id]
+                    print('to_seq_physical_block_length', len(to_seq_physical_blocks), 'from_seq_physical_block_length', len(from_seq_physical_blocks))
+
+                    for physical_from_block, physical_to_block in zip(from_seq_physical_blocks, to_seq_physical_blocks):
+                        if physical_from_block.block_number not in blocks_to_copy:
+                            blocks_to_copy[physical_from_block.block_number] = []
+                        blocks_to_copy[physical_from_block.block_number].append(physical_to_block.block_number)
+                        # TODO: handle copying non-full blocks
+
+                for group_to_unschedule in sequence_groups_to_remove:
+                    scheduled.remove(group_to_unschedule)
+                    for seq in group_to_unschedule.get_seqs():
+                        print('Setting seq status to FINISHED_IGNORED')
+                        seq.status = SequenceStatus.RUNNING
+                    """
+                    if group_to_unschedule in self.waiting:
+                        self.waiting.remove(group_to_unschedule)
+                    self.running.append(group_to_unschedule)
+                    """
+                if scheduled or ignored_seq_groups:
+                    # now it is possible our one sequence is no longer in prompt mode
+                    scheduler_outputs = SchedulerOutputs(
+                        scheduled_seq_groups=scheduled,
+                        prompt_run=True,
+                        num_batched_tokens=len(seq_lens) *
+                        max(seq_lens) if seq_lens else 0,
+                        blocks_to_swap_in=blocks_to_swap_in,
+                        blocks_to_swap_out=blocks_to_swap_out,
+                        blocks_to_copy=blocks_to_copy,
+                        ignored_seq_groups=ignored_seq_groups,
+                    )
+                    return scheduler_outputs
 
         # NOTE(woosuk): Preemption happens only when there is no available slot
         # to keep all the sequence groups in the RUNNING state.
         # In this case, the policy is responsible for deciding which sequence
         # groups to preempt.
         self.running = self.policy.sort_by_priority(now, self.running)
+        print(f'{len(self.running)=} sequences running')
 
         # Reserve new token slots for the running sequence groups.
         running: Deque[SequenceGroup] = deque()
@@ -334,10 +362,15 @@ class Scheduler:
 
         # Create input data structures.
         seq_group_metadata_list: List[SequenceGroupMetadata] = []
+        print(f'After _schedule there are {len(self.running)} sequences running')
         for seq_group in scheduler_outputs.scheduled_seq_groups:
             seq_data: Dict[int, SequenceData] = {}
             block_tables: Dict[int, List[int]] = {}
-            for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
+            running_seqs = seq_group.get_seqs(status=SequenceStatus.RUNNING)
+            all_seqs = seq_group.get_seqs()
+            print(all_seqs)
+            print(len(all_seqs))
+            for seq in running_seqs:
                 seq_id = seq.seq_id
                 seq_data[seq_id] = seq.data
                 block_tables[seq_id] = self.block_manager.get_block_table(seq)
