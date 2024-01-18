@@ -413,6 +413,7 @@ class LLMEngine:
             >>> # abort the request
             >>> engine.abort_request(request_id)
         """
+        print("NEW: not aborting a finished request")
         self.scheduler.abort_seq_group(request_id)
 
     def get_model_config(self) -> ModelConfig:
@@ -530,6 +531,7 @@ class LLMEngine:
                 if seq is not parent:
                     seq_group.add(seq)
                     if not seq.is_finished():
+                        print('Forking sequence from parent')
                         self.scheduler.fork_seq(parent, seq)
 
             # Free the finished and selected parent sequences' memory in block
@@ -538,109 +540,110 @@ class LLMEngine:
             # old sequences.
             for seq, parent in child_seqs:
                 if seq is parent and seq.is_finished():
-                    self.scheduler.free_seq(seq)
+                    print(f'### NEW: not freeing a sequence which is supposed to be freed.')
+                    #self.scheduler.free_seq(seq)
             return
+        else:
+            # Beam search case
+            # Select the child sequences to keep in the sequence group.
+            selected_child_seqs = []
+            unselected_child_seqs = []
+            beam_width = seq_group.sampling_params.best_of
+            length_penalty = seq_group.sampling_params.length_penalty
 
-        # Beam search case
-        # Select the child sequences to keep in the sequence group.
-        selected_child_seqs = []
-        unselected_child_seqs = []
-        beam_width = seq_group.sampling_params.best_of
-        length_penalty = seq_group.sampling_params.length_penalty
-
-        # Select the newly finished sequences with the highest scores
-        # to replace existing finished sequences.
-        # Tuple of (seq, parent, is_new)
-        existing_finished_seqs = [(seq, None, False)
-                                  for seq in existing_finished_seqs]
-        new_finished_seqs = [(seq, parent, True) for seq, parent in child_seqs
-                             if seq.is_finished()]
-        all_finished_seqs = existing_finished_seqs + new_finished_seqs
-        # Sort the finished sequences by their scores.
-        all_finished_seqs.sort(key=lambda x: x[0].get_beam_search_score(
-            length_penalty=length_penalty,
-            eos_token_id=self.tokenizer.eos_token_id),
-                               reverse=True)
-        for seq, parent, is_new in all_finished_seqs[:beam_width]:
-            if is_new:
-                # A newly generated child sequence finishes and has a high
-                # score, so we will add it into the sequence group.
-                selected_child_seqs.append((seq, parent))
-        for seq, parent, is_new in all_finished_seqs[beam_width:]:
-            if is_new:
-                # A newly generated child sequence finishes but has a low
-                # score, so we will not add it into the sequence group.
-                # Additionally, if this sequence is a continuation of a
-                # parent sequence, we will need remove the parent sequence
-                # from the sequence group.
-                unselected_child_seqs.append((seq, parent))
-            else:
-                # An existing finished sequence has a low score, so we will
-                # remove it from the sequence group.
-                seq_group.remove(seq.seq_id)
-
-        # select the top beam_width sequences from the running
-        # sequences for the next iteration to continue the beam
-        # search.
-        running_child_seqs = [(seq, parent) for seq, parent in child_seqs
-                              if not seq.is_finished()]
-        # Sort the running sequences by their scores.
-        running_child_seqs.sort(key=lambda x: x[0].get_beam_search_score(
-            length_penalty=length_penalty,
-            eos_token_id=self.tokenizer.eos_token_id),
+            # Select the newly finished sequences with the highest scores
+            # to replace existing finished sequences.
+            # Tuple of (seq, parent, is_new)
+            existing_finished_seqs = [(seq, None, False)
+                                    for seq in existing_finished_seqs]
+            new_finished_seqs = [(seq, parent, True) for seq, parent in child_seqs
+                                if seq.is_finished()]
+            all_finished_seqs = existing_finished_seqs + new_finished_seqs
+            # Sort the finished sequences by their scores.
+            all_finished_seqs.sort(key=lambda x: x[0].get_beam_search_score(
+                length_penalty=length_penalty,
+                eos_token_id=self.tokenizer.eos_token_id),
                                 reverse=True)
+            for seq, parent, is_new in all_finished_seqs[:beam_width]:
+                if is_new:
+                    # A newly generated child sequence finishes and has a high
+                    # score, so we will add it into the sequence group.
+                    selected_child_seqs.append((seq, parent))
+            for seq, parent, is_new in all_finished_seqs[beam_width:]:
+                if is_new:
+                    # A newly generated child sequence finishes but has a low
+                    # score, so we will not add it into the sequence group.
+                    # Additionally, if this sequence is a continuation of a
+                    # parent sequence, we will need remove the parent sequence
+                    # from the sequence group.
+                    unselected_child_seqs.append((seq, parent))
+                else:
+                    # An existing finished sequence has a low score, so we will
+                    # remove it from the sequence group.
+                    seq_group.remove(seq.seq_id)
 
-        # Check if we can stop the beam search.
-        if len(running_child_seqs) == 0:
-            # No running sequences, stop the beam search.
-            stop_beam_search = True
-        elif len(all_finished_seqs) < beam_width:
-            # Not enough finished sequences, continue the beam search.
-            stop_beam_search = False
-        else:
-            # Check the early stopping criteria
-            best_running_seq = running_child_seqs[0][0]
-            current_worst_seq = all_finished_seqs[beam_width - 1][0]
-            stop_beam_search = self._check_beam_search_early_stopping(
-                seq_group.sampling_params.early_stopping,
-                seq_group.sampling_params, best_running_seq, current_worst_seq)
+            # select the top beam_width sequences from the running
+            # sequences for the next iteration to continue the beam
+            # search.
+            running_child_seqs = [(seq, parent) for seq, parent in child_seqs
+                                if not seq.is_finished()]
+            # Sort the running sequences by their scores.
+            running_child_seqs.sort(key=lambda x: x[0].get_beam_search_score(
+                length_penalty=length_penalty,
+                eos_token_id=self.tokenizer.eos_token_id),
+                                    reverse=True)
 
-        if stop_beam_search:
-            # Stop the beam search and remove all the running sequences from
-            # the sequence group.
-            unselected_child_seqs.extend(running_child_seqs)
-        else:
-            # Continue the beam search and select the top beam_width sequences
-            # to continue the beam search.
-            selected_child_seqs.extend(running_child_seqs[:beam_width])
-            # The remaining running sequences will not be used in the next
-            # iteration. Again, if these sequences are continuations of
-            # parent sequences, we will need to remove the parent sequences
-            # from the sequence group.
-            unselected_child_seqs.extend(running_child_seqs[beam_width:])
+            # Check if we can stop the beam search.
+            if len(running_child_seqs) == 0:
+                # No running sequences, stop the beam search.
+                stop_beam_search = True
+            elif len(all_finished_seqs) < beam_width:
+                # Not enough finished sequences, continue the beam search.
+                stop_beam_search = False
+            else:
+                # Check the early stopping criteria
+                best_running_seq = running_child_seqs[0][0]
+                current_worst_seq = all_finished_seqs[beam_width - 1][0]
+                stop_beam_search = self._check_beam_search_early_stopping(
+                    seq_group.sampling_params.early_stopping,
+                    seq_group.sampling_params, best_running_seq, current_worst_seq)
 
-        # For newly created child sequences, add them to the sequence group
-        # and fork them in block manager if they are not finished.
-        for seq, parent in selected_child_seqs:
-            if seq is not parent:
-                seq_group.add(seq)
-                if not seq.is_finished():
-                    self.scheduler.fork_seq(parent, seq)
+            if stop_beam_search:
+                # Stop the beam search and remove all the running sequences from
+                # the sequence group.
+                unselected_child_seqs.extend(running_child_seqs)
+            else:
+                # Continue the beam search and select the top beam_width sequences
+                # to continue the beam search.
+                selected_child_seqs.extend(running_child_seqs[:beam_width])
+                # The remaining running sequences will not be used in the next
+                # iteration. Again, if these sequences are continuations of
+                # parent sequences, we will need to remove the parent sequences
+                # from the sequence group.
+                unselected_child_seqs.extend(running_child_seqs[beam_width:])
 
-        # Free the finished and selected parent sequences' memory in block
-        # manager. Keep them in the sequence group as candidate output.
-        for seq, parent in selected_child_seqs:
-            if seq is parent and seq.is_finished():
-                self.scheduler.free_seq(seq)
+            # For newly created child sequences, add them to the sequence group
+            # and fork them in block manager if they are not finished.
+            for seq, parent in selected_child_seqs:
+                if seq is not parent:
+                    seq_group.add(seq)
+                    if not seq.is_finished():
+                        self.scheduler.fork_seq(parent, seq)
 
-        # Remove the unselected parent sequences from the sequence group and
-        # free their memory in block manager.
-        for seq, parent in unselected_child_seqs:
-            if seq is parent:
-                # Remove the parent sequence if it is not selected for next
-                # iteration
-                seq_group.remove(seq.seq_id)
-                self.scheduler.free_seq(seq)
+            # Free the finished and selected parent sequences' memory in block
+            # manager. Keep them in the sequence group as candidate output.
+            for seq, parent in selected_child_seqs:
+                if seq is parent and seq.is_finished():
+                    self.scheduler.free_seq(seq)
+
+            # Remove the unselected parent sequences from the sequence group and
+            # free their memory in block manager.
+            for seq, parent in unselected_child_seqs:
+                if seq is parent:
+                    # Remove the parent sequence if it is not selected for next
+                    # iteration
+                    seq_group.remove(seq.seq_id)
+                    self.scheduler.free_seq(seq)
 
     def _process_model_outputs(
             self, output: SamplerOutput,
@@ -651,7 +654,8 @@ class LLMEngine:
             self._process_sequence_group_outputs(seq_group, outputs)
 
         # Free the finished sequence groups.
-        self.scheduler.free_finished_seq_groups()
+        print('NEW: not freeing finished seq groups')
+        #self.scheduler.free_finished_seq_groups()
 
         # Create the outputs.
         request_outputs: List[RequestOutput] = []

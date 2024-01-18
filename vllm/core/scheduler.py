@@ -83,6 +83,9 @@ class Scheduler:
         # Sequence groups in the SWAPPED state.
         self.swapped: Deque[SequenceGroup] = deque()
 
+        # Sequence groups that are cached -- these are used to keep kv caches warm for subsequent requests.
+        self.cached: Deque[SequenceGroup] = deque()
+
     def add_seq_group(self, seq_group: SequenceGroup) -> None:
         # Add sequence groups to the waiting queue.
         self.waiting.append(seq_group)
@@ -103,6 +106,7 @@ class Scheduler:
         if isinstance(request_id, str):
             request_id = (request_id, )
         request_ids = set(request_id)
+        # TODO move finished sequences to cache
         for state_queue in [self.waiting, self.running, self.swapped]:
             aborted_groups = []
             for seq_group in state_queue:
@@ -114,14 +118,17 @@ class Scheduler:
                     # Appending aborted group into pending list.
                     aborted_groups.append(seq_group)
                     request_ids.remove(seq_group.request_id)
+            
             for aborted_group in aborted_groups:
                 # Remove the sequence group from the state queue.
                 state_queue.remove(aborted_group)
+                self.cached.append(aborted_group)
                 for seq in seq_group.get_seqs():
                     if seq.is_finished():
                         continue
                     seq.status = SequenceStatus.FINISHED_ABORTED
-                    self.free_seq(seq)
+                    # NEW: not freeing this sequence since it is now cached.
+                    # self.free_seq(seq)
 
     def has_unfinished_seqs(self) -> bool:
         return self.waiting or self.running or self.swapped
@@ -134,6 +141,7 @@ class Scheduler:
         blocks_to_swap_in: Dict[int, int] = {}
         blocks_to_swap_out: Dict[int, int] = {}
         blocks_to_copy: Dict[int, List[int]] = {}
+        print(f'len(swapped): {len(self.swapped)} len(waiting): {len(self.waiting)} len(running): {len(self.running)} len(cached): {len(self.cached)}')
 
         # Fix the current time.
         now = time.monotonic()

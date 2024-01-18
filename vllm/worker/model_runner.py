@@ -81,6 +81,9 @@ class ModelRunner:
         slot_mapping: List[List[int]] = []
 
         prompt_lens: List[int] = []
+        print()
+        logger.info(f'###############{len(seq_group_metadata_list)=}')
+        print()
         for seq_group_metadata in seq_group_metadata_list:
             assert seq_group_metadata.is_prompt
             seq_ids = list(seq_group_metadata.seq_data.keys())
@@ -123,6 +126,9 @@ class ModelRunner:
                 block_offset = i % self.block_size
                 slot = block_number * self.block_size + block_offset
                 slot_mapping[-1].append(slot)
+            print()
+            print(f'#### {slot_mapping=} {block_table=}')
+            print()
 
         max_prompt_len = max(prompt_lens)
         input_tokens = _make_tensor_with_pad(input_tokens,

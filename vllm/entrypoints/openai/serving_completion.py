@@ -18,6 +18,7 @@ logger = init_logger(__name__)
 class OpenAIServingCompletion(OpenAIServing):
 
     def __init__(self, engine: AsyncLLMEngine, served_model: str):
+        logger.info(f'Engine init.')
         super().__init__(engine=engine, served_model=served_model)
 
     async def create_completion(self, request: CompletionRequest,
@@ -32,6 +33,7 @@ class OpenAIServingCompletion(OpenAIServing):
             suffix)
             - logit_bias (to be supported by vLLM engine)
         """
+        logger.info(f'Received request {request}')
 
         error_check_ret = await self._check_model(request)
         if error_check_ret is not None:
