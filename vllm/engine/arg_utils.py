@@ -35,6 +35,7 @@ class EngineArgs:
     quantization: Optional[str] = None
     enforce_eager: bool = False
     max_context_len_to_capture: int = 8192
+    enable_cross_request_kv_cache_sharing: bool = False
 
     def __post_init__(self):
         if self.tokenizer is None:
@@ -202,6 +203,8 @@ class EngineArgs:
                             help='maximum context length covered by CUDA '
                             'graphs. When a sequence has context length '
                             'larger than this, we fall back to eager mode.')
+        parser.add_argument('--enable-cross-request-kv-cache-sharing',
+                            action='store_true')
         return parser
 
     @classmethod
@@ -225,7 +228,8 @@ class EngineArgs:
         cache_config = CacheConfig(self.block_size,
                                    self.gpu_memory_utilization,
                                    self.swap_space,
-                                   model_config.get_sliding_window())
+                                   model_config.get_sliding_window(),
+                                   self.enable_cross_request_kv_cache_sharing)
         parallel_config = ParallelConfig(self.pipeline_parallel_size,
                                          self.tensor_parallel_size,
                                          self.worker_use_ray,

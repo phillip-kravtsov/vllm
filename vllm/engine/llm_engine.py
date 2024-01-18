@@ -537,11 +537,10 @@ class LLMEngine:
             # manager. Keep them in the sequence group as candidate output.
             # NOTE: we need to fork the new sequences before freeing the
             # old sequences.
-            for seq, parent in child_seqs:
-                if seq is parent and seq.is_finished():
-                    pass
-                    #print(f'### NEW: not freeing a sequence which is supposed to be freed.')
-                    #self.scheduler.free_seq(seq)
+            if not self.cache_config.enable_cross_request_kv_cache_sharing:
+                for seq, parent in child_seqs:
+                    if seq is parent and seq.is_finished():
+                        self.scheduler.free_seq(seq)
             return
         else:
             # Beam search case

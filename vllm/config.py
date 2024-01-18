@@ -280,11 +280,13 @@ class CacheConfig:
         gpu_memory_utilization: float,
         swap_space: int,
         sliding_window: Optional[int] = None,
+        enable_cross_request_kv_cache_sharing: bool = False,
     ) -> None:
         self.block_size = block_size
         self.gpu_memory_utilization = gpu_memory_utilization
         self.swap_space_bytes = swap_space * _GB
         self.sliding_window = sliding_window
+        self.enable_cross_request_kv_cache_sharing = enable_cross_request_kv_cache_sharing
         self._verify_args()
 
         # Will be set after profiling.
