@@ -383,6 +383,7 @@ class AsyncLLMEngine:
                                                               max_log_len]
 
             logger.info(f"Received request {request_id}: "
+                        f'prompt="{shortened_prompt}", '
                         f"sampling params: {sampling_params}, ")
 
         if not self.is_running:
