@@ -145,7 +145,7 @@ class Scheduler:
         input_ids_to_sequence: Dict[Tuple, Sequence] = {}
         # Fix the current time.
         now = time.monotonic()
-        ttl = 1.0
+        ttl = 10.0
         to_evict = []
         for seq_group in self.cached:
             if seq_group.arrival_time < now - ttl:

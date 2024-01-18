@@ -381,10 +381,9 @@ class AsyncLLMEngine:
                 if shortened_token_ids is not None:
                     shortened_token_ids = shortened_token_ids[:self.
                                                               max_log_len]
+
             logger.info(f"Received request {request_id}: "
-                        f"prompt: {shortened_prompt!r}, "
-                        f"sampling params: {sampling_params}, "
-                        f"prompt token ids: {shortened_token_ids}.")
+                        f"sampling params: {sampling_params}, ")
 
         if not self.is_running:
             if self.start_engine_loop:
