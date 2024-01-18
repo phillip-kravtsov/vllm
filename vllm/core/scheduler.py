@@ -142,6 +142,13 @@ class Scheduler:
         blocks_to_swap_out: Dict[int, int] = {}
         blocks_to_copy: Dict[int, List[int]] = {}
         print(f'len(swapped): {len(self.swapped)} len(waiting): {len(self.waiting)} len(running): {len(self.running)} len(cached): {len(self.cached)}')
+        input_ids_to_sequence: Dict[Tuple, Sequence] = {}
+        for seq_group in self.cached:
+            cached_sequences = seq_group.get_seqs()
+            for cached_seq in cached_sequences:
+                token_ids = cached_seq.get_token_ids()
+                input_ids_to_sequence[tuple(token_ids)] = cached_seq
+
 
         # Fix the current time.
         now = time.monotonic()
@@ -218,6 +225,23 @@ class Scheduler:
                 scheduled.append(seq_group)
 
             if scheduled or ignored_seq_groups:
+                # list[from, to]
+                sequences_to_copy: List[Tuple[Sequence, Sequence]] = []
+                for seq_group in self.waiting:
+                    waiting_sequences = seq_group.get_seqs()
+                    for waiting_seq in waiting_sequences:
+                        waiting_seq_token_ids = tuple(waiting_seq.data.prompt_token_ids)
+                        print('WSTI',waiting_seq_token_ids)
+                        for cached_input_ids, cached_seq in input_ids_to_sequence.items():
+                            hits = [c == w for c, w in zip(cached_input_ids, waiting_seq_token_ids)]
+                            if all(hits) and len(hits) == len(waiting_seq_token_ids):
+                                # we only care about a cache hit if the stuff we are about to decode is exactly 
+                                # covered by the stuff we have cached.
+                                print('Potential cache hit of length ', len(hits))
+                                sequences_to_copy.append((cached_seq, waiting_seq))
+                for from_sequence, to_sequence in sequences_to_copy: 
+                    pass
+
                 scheduler_outputs = SchedulerOutputs(
                     scheduled_seq_groups=scheduled,
                     prompt_run=True,

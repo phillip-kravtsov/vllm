@@ -540,7 +540,8 @@ class LLMEngine:
             # old sequences.
             for seq, parent in child_seqs:
                 if seq is parent and seq.is_finished():
-                    print(f'### NEW: not freeing a sequence which is supposed to be freed.')
+                    pass
+                    #print(f'### NEW: not freeing a sequence which is supposed to be freed.')
                     #self.scheduler.free_seq(seq)
             return
         else:
@@ -654,7 +655,7 @@ class LLMEngine:
             self._process_sequence_group_outputs(seq_group, outputs)
 
         # Free the finished sequence groups.
-        print('NEW: not freeing finished seq groups')
+        #print('NEW: not freeing finished seq groups')
         #self.scheduler.free_finished_seq_groups()
 
         # Create the outputs.

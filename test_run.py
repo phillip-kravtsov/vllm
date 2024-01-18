@@ -14,9 +14,10 @@ client = OpenAI(
     base_url=openai_api_base,
 )
 first_response = client.completions.create(model="facebook/opt-125m",
-                                      prompt=chat_prompt)
-second_response = client.completions.create(model="facebook/opt-125m",
                                       prompt=chat_prompt + " small city on the coast of")
+# second response is a substr of the first one
+second_response = client.completions.create(model="facebook/opt-125m",
+                                      prompt=chat_prompt)
 print("First result:", first_response)
 print()
 print("Folllowup result:", second_response)
