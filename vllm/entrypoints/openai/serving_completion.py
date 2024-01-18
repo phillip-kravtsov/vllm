@@ -33,7 +33,6 @@ class OpenAIServingCompletion(OpenAIServing):
             suffix)
             - logit_bias (to be supported by vLLM engine)
         """
-        logger.info(f'Received request {request}')
 
         error_check_ret = await self._check_model(request)
         if error_check_ret is not None:

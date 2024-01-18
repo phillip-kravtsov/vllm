@@ -141,17 +141,29 @@ class Scheduler:
         blocks_to_swap_in: Dict[int, int] = {}
         blocks_to_swap_out: Dict[int, int] = {}
         blocks_to_copy: Dict[int, List[int]] = {}
-        print(f'len(swapped): {len(self.swapped)} len(waiting): {len(self.waiting)} len(running): {len(self.running)} len(cached): {len(self.cached)}')
+#        print(f'len(swapped): {len(self.swapped)} len(waiting): {len(self.waiting)} len(running): {len(self.running)} len(cached): {len(self.cached)}')
         input_ids_to_sequence: Dict[Tuple, Sequence] = {}
-        for seq_group in self.cached:
-            cached_sequences = seq_group.get_seqs()
-            for cached_seq in cached_sequences:
-                token_ids = cached_seq.get_token_ids()
-                input_ids_to_sequence[tuple(token_ids)] = cached_seq
-
-
         # Fix the current time.
         now = time.monotonic()
+        ttl = 1.0
+        to_evict = []
+        for seq_group in self.cached:
+            if seq_group.arrival_time < now - ttl:
+                to_evict.append(seq_group)
+            else:
+                cached_sequences = seq_group.get_seqs()
+                for cached_seq in cached_sequences:
+                    token_ids = cached_seq.get_token_ids()
+                    input_ids_to_sequence[tuple(token_ids)] = cached_seq
+        for evict_group in to_evict:
+            self.cached.remove(evict_group)
+            for seq in evict_group.get_seqs():
+                if seq.is_finished():
+                    continue
+                self.free_seq(seq)
+
+
+
 
         # Join waiting sequences if possible.
         if not self.swapped:
@@ -232,7 +244,7 @@ class Scheduler:
                     waiting_sequences = seq_group.get_seqs()
                     for waiting_seq in waiting_sequences:
                         waiting_seq_token_ids = tuple(waiting_seq.data.prompt_token_ids)
-                        print('WSTI',waiting_seq_token_ids)
+                        #print('WSTI',waiting_seq_token_ids)
                         for cached_input_ids, cached_seq in input_ids_to_sequence.items():
                             hits = [c == w for c, w in zip(cached_input_ids, waiting_seq_token_ids)]
                             if all(hits) and len(hits) == len(waiting_seq_token_ids):
@@ -245,11 +257,11 @@ class Scheduler:
                 for from_sequence, to_sequence in sequences_to_copy: 
                     print('Copying sequences')
                     to_sequence_length = len(to_sequence.get_token_ids())
-                    print('to_seq_length', to_sequence_length, 'from_seq_length', len(from_sequence.get_token_ids()))
+                    #print('to_seq_length', to_sequence_length, 'from_seq_length', len(from_sequence.get_token_ids()))
 
                     from_seq_physical_blocks = self.block_manager.block_tables[from_sequence.seq_id]
                     to_seq_physical_blocks = self.block_manager.block_tables[to_sequence.seq_id]
-                    print('to_seq_physical_block_length', len(to_seq_physical_blocks), 'from_seq_physical_block_length', len(from_seq_physical_blocks))
+                    #print('to_seq_physical_block_length', len(to_seq_physical_blocks), 'from_seq_physical_block_length', len(from_seq_physical_blocks))
 
                     for physical_from_block, physical_to_block in zip(from_seq_physical_blocks, to_seq_physical_blocks):
                         if physical_from_block.block_number not in blocks_to_copy:
@@ -260,7 +272,6 @@ class Scheduler:
                 for group_to_unschedule in sequence_groups_to_remove:
                     scheduled.remove(group_to_unschedule)
                     for seq in group_to_unschedule.get_seqs():
-                        print('Setting seq status to FINISHED_IGNORED')
                         seq.status = SequenceStatus.RUNNING
                     """
                     if group_to_unschedule in self.waiting:
@@ -286,7 +297,6 @@ class Scheduler:
         # In this case, the policy is responsible for deciding which sequence
         # groups to preempt.
         self.running = self.policy.sort_by_priority(now, self.running)
-        print(f'{len(self.running)=} sequences running')
 
         # Reserve new token slots for the running sequence groups.
         running: Deque[SequenceGroup] = deque()
@@ -362,14 +372,11 @@ class Scheduler:
 
         # Create input data structures.
         seq_group_metadata_list: List[SequenceGroupMetadata] = []
-        print(f'After _schedule there are {len(self.running)} sequences running')
         for seq_group in scheduler_outputs.scheduled_seq_groups:
             seq_data: Dict[int, SequenceData] = {}
             block_tables: Dict[int, List[int]] = {}
             running_seqs = seq_group.get_seqs(status=SequenceStatus.RUNNING)
             all_seqs = seq_group.get_seqs()
-            print(all_seqs)
-            print(len(all_seqs))
             for seq in running_seqs:
                 seq_id = seq.seq_id
                 seq_data[seq_id] = seq.data

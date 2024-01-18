@@ -413,7 +413,6 @@ class LLMEngine:
             >>> # abort the request
             >>> engine.abort_request(request_id)
         """
-        print("NEW: not aborting a finished request")
         self.scheduler.abort_seq_group(request_id)
 
     def get_model_config(self) -> ModelConfig:
