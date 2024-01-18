@@ -151,6 +151,7 @@ class Scheduler:
 
         for seq_group in self.cached:
             if seq_group.arrival_time < now - ttl:
+                print(f'Evicting seq group with arrival time {seq_group.arrival_time:4f}, now {now:4f} with difference {now - seq_group.arrival_time:4f}')
                 to_evict.append(seq_group)
             else:
                 cached_sequences = seq_group.get_seqs()
@@ -163,9 +164,7 @@ class Scheduler:
             print('Evicting seq group')
             for seq in evict_group.get_seqs():
                 self.free_seq(seq)
-
-
-
+        print(f'There are {len(input_ids_to_sequence)} cached sequences')
 
         # Join waiting sequences if possible.
         if not self.swapped:
