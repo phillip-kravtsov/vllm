@@ -143,12 +143,11 @@ class Scheduler:
         blocks_to_swap_in: Dict[int, int] = {}
         blocks_to_swap_out: Dict[int, int] = {}
         blocks_to_copy: Dict[int, List[int]] = {}
-#        print(f'len(swapped): {len(self.swapped)} len(waiting): {len(self.waiting)} len(running): {len(self.running)} len(cached): {len(self.cached)}')
         input_ids_to_sequence: Dict[Tuple, Sequence] = {}
         # Fix the current time.
         now = time.monotonic()
         ttl = 10.0
-        to_evict = []
+        to_evict: List[SequenceGroup] = []
 
         for seq_group in self.cached:
             if seq_group.arrival_time < now - ttl:
@@ -158,11 +157,11 @@ class Scheduler:
                 for cached_seq in cached_sequences:
                     token_ids = cached_seq.get_token_ids()
                     input_ids_to_sequence[tuple(token_ids)] = cached_seq
+
         for evict_group in to_evict:
             self.cached.remove(evict_group)
+            print('Evicting seq group')
             for seq in evict_group.get_seqs():
-                if seq.is_finished():
-                    continue
                 self.free_seq(seq)
 
 

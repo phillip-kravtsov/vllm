@@ -1,9 +1,9 @@
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 openai_api_key = "EMPTY"
 openai_api_base = "http://localhost:8000/v1"
 
-client = OpenAI(
+client = AsyncOpenAI(
     api_key=openai_api_key,
     base_url=openai_api_base,
 )
@@ -18,36 +18,38 @@ Dickens opens the novel with a sentence that has become famous:
 
 It was the best of times, it was the worst of times, it was the age of wisdom, it was the age of foolishness, it was the epoch of belief, it was the epoch of incredulity, it was the season of Light, it was the season of Darkness, it was the spring of hope, it was the winter of despair, we had everything before us, we had nothing before us, we were all going direct to Heaven, we were all going direct the other way—in short, the period was so far like the present period, that some of its noisiest authorities insisted on its being received, for good or for evil,"""] * 10)
 suffix_prompt = chat_prompt + " in the superlative degree of comparison only."
-client = OpenAI(
-    api_key=openai_api_key,
-    base_url=openai_api_base,
-)
 import time
 model = 'mistralai/Mistral-7B-v0.1'
-def do_first():
+async def do_first():
     start_time = time.time()
-    first_response = client.completions.create(model=model,
+    first_response = await client.completions.create(model=model,
                                         prompt=suffix_prompt, temperature=0.0)
     first_time = time.time() - start_time
     print(first_response.usage)
     print("Time taken for first completion", first_time)
-def do_second():
+async def do_second():
     second_start_time = time.time()
-    second_response = client.completions.create(model=model,
+    second_response = await client.completions.create(model=model,
                                         prompt=chat_prompt, temperature=0.0)
     print(second_response.usage)
     second_time = time.time() - second_start_time
     print()
     print('Time taken for second completion', second_time)
     return second_response.choices[0].text
-print('Without sharing cross-request KV')
-second_text = do_second()
-print('completion: ', second_text)
-time.sleep(11)
-print()
-print()
-print('With sharing cross-request KV')
-do_first()
-second_text = do_second()
-print('completion: ', second_text)
 
+async def main() -> None:
+    print('Without sharing cross-request KV')
+    for i in range(4):
+        second_text = await do_second()
+    print('completion: ', second_text)
+    time.sleep(11)
+    print()
+    print()
+    print('With sharing cross-request KV')
+
+    await do_first()
+    for i in range(8):
+        second_text = await do_second()
+    print('completion: ', second_text)
+import asyncio
+asyncio.run(main())
