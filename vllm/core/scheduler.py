@@ -258,22 +258,23 @@ class Scheduler:
                                 sequence_groups_to_copy.append((cached_sequence_group, seq_group))
                                 sequence_groups_to_remove.add(seq_group)
 
+                # Copy the cached sequence kv cache directly to the waiting sequence.
+                # We don't need to worry about non-full blocks because VLLM does not read data from them past the ctx length
                 for from_sequence, to_sequence in sequences_to_copy: 
-                    print('Copying sequences')
                     from_seq_physical_blocks = self.block_manager.block_tables[from_sequence.seq_id]
                     to_seq_physical_blocks = self.block_manager.block_tables[to_sequence.seq_id]
                     for physical_from_block, physical_to_block in zip(from_seq_physical_blocks, to_seq_physical_blocks):
                         if physical_from_block.block_number not in blocks_to_copy:
                             blocks_to_copy[physical_from_block.block_number] = []
                         blocks_to_copy[physical_from_block.block_number].append(physical_to_block.block_number)
-                print('Copying logprobs')
-                print('there are ', len(sequence_groups_to_copy), 'seq groups to copy')
+
+                # copy the prompt logprobs from the cached sequence group to the waiting sequence group
+                # this is because the waiting group never goes into the prefill stage of vllm
                 for from_sequence_group, to_sequence_group in sequence_groups_to_copy:
-                    print('logprobs')
-                    print(len(from_sequence_group.prompt_logprobs))
+                    # TODO ideally would handle this case more elegantly -- we should ignore this sequence group for caching and report
                     assert from_sequence_group.prompt_logprobs is not None
                     to_sequence_group.prompt_logprobs = from_sequence_group.prompt_logprobs[:len(to_sequence_group.prompt_token_ids)]
-
+                # move the waiting sequence group to the RUNNING stage as if it just executed prefill
                 for group_to_unschedule in sequence_groups_to_remove:
                     scheduled.remove(group_to_unschedule)
                     for seq in group_to_unschedule.get_seqs():
