@@ -164,7 +164,8 @@ class Scheduler:
             print('Evicting seq group')
             for seq in evict_group.get_seqs():
                 self.free_seq(seq)
-        print(f'There are {len(input_ids_to_sequence)} cached sequences')
+        if len(input_ids_to_sequence) > 0:
+            print(f'There are {len(input_ids_to_sequence)} cached sequences')
 
         # Join waiting sequences if possible.
         if not self.swapped:
