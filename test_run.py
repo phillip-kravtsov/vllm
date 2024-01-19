@@ -31,7 +31,7 @@ async def do_first():
 async def do_second():
     second_start_time = time.time()
     second_response = await client.completions.create(model=model,
-                                        prompt=chat_prompt, temperature=0.0, echo=True, logprobs=5)
+                                        prompt=chat_prompt, temperature=0.0, echo=True, logprobs=5, top_logprobs=5)
     print(second_response.usage)
     second_time = time.time() - second_start_time
     print()
@@ -42,9 +42,9 @@ async def main() -> None:
     print('Without sharing cross-request KV')
     second = await do_second()
     print(len(second.logprobs.token_logprobs))
-    #time.sleep(11)
+    time.sleep(11)
     print()
-    #print('With sharing cross-request KV')
+    print('With sharing cross-request KV')
 
     await do_first()
     another = await do_second()

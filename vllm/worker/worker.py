@@ -193,10 +193,13 @@ class Worker:
         # If there is no input, we don't need to execute the model.
         if num_seq_groups == 0:
             return {}
-
-        output = self.model_runner.execute_model(seq_group_metadata_list,
-                                                 self.gpu_cache)
-        return output
+        try:
+            output = self.model_runner.execute_model(seq_group_metadata_list,
+                                                    self.gpu_cache)
+            return output
+        except Exception as e:
+            print(e)
+            return None
 
 
 def _init_distributed_environment(
