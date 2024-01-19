@@ -30,7 +30,8 @@ async def do_first():
 async def do_second():
     second_start_time = time.time()
     second_response = await client.completions.create(model=model,
-                                        prompt=chat_prompt, temperature=0.0)
+                                        prompt=chat_prompt, temperature=0.0, echo=True, logprobs=True)
+    print(dir(second_response.choices[0]))
     print(second_response.usage)
     second_time = time.time() - second_start_time
     print()

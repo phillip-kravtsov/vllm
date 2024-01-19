@@ -232,6 +232,7 @@ class OpenAIServingCompletion(OpenAIServing):
         assert final_res is not None
         choices = []
         prompt_token_ids = final_res.prompt_token_ids
+        print('request output')
         prompt_logprobs = final_res.prompt_logprobs
         prompt_text = final_res.prompt
         for output in final_res.outputs:
@@ -240,6 +241,7 @@ class OpenAIServingCompletion(OpenAIServing):
                     token_ids = output.token_ids
                     top_logprobs = output.logprobs
                     if request.echo:
+                        assert prompt_logprobs is not None
                         token_ids = prompt_token_ids + token_ids
                         top_logprobs = prompt_logprobs + top_logprobs
                 else:
