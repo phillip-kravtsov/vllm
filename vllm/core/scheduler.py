@@ -259,7 +259,7 @@ class Scheduler:
                                 sequence_groups_to_remove.add(seq_group)
 
                 # Copy the cached sequence kv cache directly to the waiting sequence.
-                # We don't need to worry about non-full blocks because VLLM does not read data from them past the ctx length
+                # We should make sure non-full blocks are not read by PagedAttention
                 for from_sequence, to_sequence in sequences_to_copy: 
                     from_seq_physical_blocks = self.block_manager.block_tables[from_sequence.seq_id]
                     to_seq_physical_blocks = self.block_manager.block_tables[to_sequence.seq_id]
@@ -269,7 +269,7 @@ class Scheduler:
                         blocks_to_copy[physical_from_block.block_number].append(physical_to_block.block_number)
 
                 # copy the prompt logprobs from the cached sequence group to the waiting sequence group
-                # this is because the waiting group never goes into the prefill stage of vllm
+                # this is because the waiting group never goes into the prefill stage of vllm where prompt logp are produced
                 for from_sequence_group, to_sequence_group in sequence_groups_to_copy:
                     # TODO ideally would handle this case more elegantly -- we should ignore this sequence group for caching and report
                     assert from_sequence_group.prompt_logprobs is not None
@@ -384,7 +384,6 @@ class Scheduler:
             seq_data: Dict[int, SequenceData] = {}
             block_tables: Dict[int, List[int]] = {}
             running_seqs = seq_group.get_seqs(status=SequenceStatus.RUNNING)
-            all_seqs = seq_group.get_seqs()
             for seq in running_seqs:
                 seq_id = seq.seq_id
                 seq_data[seq_id] = seq.data

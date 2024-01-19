@@ -1,4 +1,5 @@
 from openai import AsyncOpenAI
+import time
 
 openai_api_key = "EMPTY"
 openai_api_base = "http://localhost:8000/v1"
@@ -16,9 +17,9 @@ Book the First: Recalled to Life
 Opening lines
 Dickens opens the novel with a sentence that has become famous:
 
-It was the best of times, it was the worst of times, it was the age of wisdom, it was the age of foolishness, it was the epoch of belief, it was the epoch of incredulity, it was the season of Light, it was the season of Darkness, it was the spring of hope, it was the winter of despair, we had everything before us, we had nothing before us, we were all going direct to Heaven, we were all going direct the other way—in short, the period was so far like the present period, that some of its noisiest authorities insisted on its being received, for good or for evil,"""] * 10)
+It was the best of times, it was the worst of times, it was the age of wisdom, it was the age of foolishness, it was the epoch of belief, it was the epoch of incredulity, it was the season of Light, it was the season of Darkness, it was the spring of hope, it was the winter of despair, we had everything before us, we had nothing before us, we were all going direct to Heaven, we were all going direct the other way—in short, the period was so far like the present period, that some of its noisiest authorities insisted on its being received"""] * 10)
 suffix_prompt = chat_prompt + " in the superlative degree of comparison only."
-import time
+
 model = 'mistralai/Mistral-7B-v0.1'
 async def do_first():
     start_time = time.time()
@@ -31,7 +32,7 @@ async def do_first():
 async def do_second():
     second_start_time = time.time()
     second_response = await client.completions.create(model=model,
-                                        prompt=chat_prompt, temperature=0.0, echo=True, logprobs=5, top_logprobs=5)
+                                        prompt=chat_prompt, temperature=0.0, echo=True, logprobs=5)
     print(second_response.usage)
     second_time = time.time() - second_start_time
     print()
@@ -40,14 +41,12 @@ async def do_second():
 
 async def main() -> None:
     print('Without sharing cross-request KV')
-    second = await do_second()
-    print(len(second.logprobs.token_logprobs))
+    await do_second()
     time.sleep(11)
     print()
     print('With sharing cross-request KV')
 
     await do_first()
-    another = await do_second()
-    print(len(another.logprobs.token_logprobs))
+    await do_second()
 import asyncio
 asyncio.run(main())
