@@ -42,9 +42,9 @@ async def main() -> None:
     print('Without sharing cross-request KV')
     second = await do_second()
     print(len(second.logprobs.token_logprobs))
-    time.sleep(11)
+    #time.sleep(11)
     print()
-    print('With sharing cross-request KV')
+    #print('With sharing cross-request KV')
 
     await do_first()
     another = await do_second()

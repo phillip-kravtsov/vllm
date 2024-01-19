@@ -279,8 +279,12 @@ class Scheduler:
                     scheduled.remove(group_to_unschedule)
                     for seq in group_to_unschedule.get_seqs():
                         seq.status = SequenceStatus.RUNNING
+                    if group_to_unschedule not in self.running:
+                        self.running.append(group_to_unschedule)
 
             if scheduled or ignored_seq_groups:
+                print('Scheduling prompt run')
+                print([len(sg.get_seqs()) for sg in scheduled])
                 scheduler_outputs = SchedulerOutputs(
                     scheduled_seq_groups=scheduled,
                     prompt_run=True,
@@ -354,6 +358,9 @@ class Scheduler:
             seq_group.num_seqs(status=SequenceStatus.RUNNING)
             for seq_group in self.running)
 
+        print('Scheduling prompt run')
+        print([len(sg.get_seqs()) for sg in self.running])
+        print([sg.num_seqs(status=SequenceStatus.RUNNING) for sg in self.running])
         scheduler_outputs = SchedulerOutputs(
             scheduled_seq_groups=self.running,
             prompt_run=False,
