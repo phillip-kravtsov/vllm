@@ -23,34 +23,31 @@ model = 'mistralai/Mistral-7B-v0.1'
 async def do_first():
     start_time = time.time()
     first_response = await client.completions.create(model=model,
-                                        prompt=suffix_prompt, temperature=0.0)
+                                        prompt=suffix_prompt, temperature=0.0, echo=True, logprobs=5)
     first_time = time.time() - start_time
     print(first_response.usage)
     print("Time taken for first completion", first_time)
+
 async def do_second():
     second_start_time = time.time()
     second_response = await client.completions.create(model=model,
-                                        prompt=chat_prompt, temperature=0.0, echo=True, logprobs=True)
-    print(dir(second_response.choices[0]))
+                                        prompt=chat_prompt, temperature=0.0, echo=True, logprobs=5)
     print(second_response.usage)
     second_time = time.time() - second_start_time
     print()
     print('Time taken for second completion', second_time)
-    return second_response.choices[0].text
+    return second_response.choices[0]
 
 async def main() -> None:
     print('Without sharing cross-request KV')
-    for i in range(4):
-        second_text = await do_second()
-    print('completion: ', second_text)
+    second = await do_second()
+    print(len(second.logprobs.token_logprobs))
     time.sleep(11)
-    print()
     print()
     print('With sharing cross-request KV')
 
     await do_first()
-    for i in range(8):
-        second_text = await do_second()
-    print('completion: ', second_text)
+    another = await do_second()
+    print(len(another.logprobs.token_logprobs))
 import asyncio
 asyncio.run(main())

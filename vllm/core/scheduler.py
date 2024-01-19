@@ -143,10 +143,10 @@ class Scheduler:
         blocks_to_swap_in: Dict[int, int] = {}
         blocks_to_swap_out: Dict[int, int] = {}
         blocks_to_copy: Dict[int, List[int]] = {}
-        input_ids_to_sequence: Dict[Tuple, Sequence] = {}
+        input_ids_to_sequence: Dict[Tuple, Tuple[Sequence, SequenceGroup]] = {}
         # Fix the current time.
         now = time.monotonic()
-        ttl = 20.0
+        ttl = 10.0
         to_evict: List[SequenceGroup] = []
 
         for seq_group in self.cached:
@@ -157,7 +157,7 @@ class Scheduler:
                 cached_sequences = seq_group.get_seqs()
                 for cached_seq in cached_sequences:
                     token_ids = cached_seq.get_token_ids()
-                    input_ids_to_sequence[tuple(token_ids)] = cached_seq
+                    input_ids_to_sequence[tuple(token_ids)] = (cached_seq, seq_group)
 
         for evict_group in to_evict:
             self.cached.remove(evict_group)
@@ -239,13 +239,15 @@ class Scheduler:
                 scheduled.append(seq_group)
 
             if scheduled and self.cache_config.enable_cross_request_kv_cache_sharing:
+
                 sequences_to_copy: List[Tuple[Sequence, Sequence]] = []
                 sequence_groups_to_remove: Set[SequenceGroup] = set()
+                sequence_groups_to_copy: List[Tuple[SequenceGroup, SequenceGroup]] = []
                 for seq_group in scheduled:
                     waiting_sequences = seq_group.get_seqs()
                     for waiting_seq in waiting_sequences:
                         waiting_seq_token_ids = tuple(waiting_seq.data.prompt_token_ids)
-                        for cached_input_ids, cached_seq in input_ids_to_sequence.items():
+                        for cached_input_ids, (cached_seq, cached_sequence_group) in input_ids_to_sequence.items():
                             hits = [c == w for c, w in zip(cached_input_ids, waiting_seq_token_ids)]
                             print('Hits', sum(hits), len(hits), 'len(waiting)', len(waiting_seq_token_ids), 'len(cache)', len(cached_input_ids))
                             if all(hits) and len(hits) == len(waiting_seq_token_ids):
@@ -253,6 +255,7 @@ class Scheduler:
                                 # covered by the stuff we have cached.
                                 print('Potential cache hit of length ', len(hits))
                                 sequences_to_copy.append((cached_seq, waiting_seq))
+                                sequence_groups_to_copy.append((cached_sequence_group, seq_group))
                                 sequence_groups_to_remove.add(seq_group)
 
                 for from_sequence, to_sequence in sequences_to_copy: 
@@ -263,6 +266,13 @@ class Scheduler:
                         if physical_from_block.block_number not in blocks_to_copy:
                             blocks_to_copy[physical_from_block.block_number] = []
                         blocks_to_copy[physical_from_block.block_number].append(physical_to_block.block_number)
+                print('Copying logprobs')
+                print('there are ', len(sequence_groups_to_copy), 'seq groups to copy')
+                for from_sequence_group, to_sequence_group in sequence_groups_to_copy:
+                    print('logprobs')
+                    print(len(from_sequence_group.prompt_logprobs))
+                    assert from_sequence_group.prompt_logprobs is not None
+                    to_sequence_group.prompt_logprobs = from_sequence_group.prompt_logprobs[:len(to_sequence_group.prompt_token_ids)]
 
                 for group_to_unschedule in sequence_groups_to_remove:
                     scheduled.remove(group_to_unschedule)
