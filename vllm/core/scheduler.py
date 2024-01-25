@@ -7,11 +7,17 @@ from vllm.config import CacheConfig, SchedulerConfig
 from vllm.core.block_manager import AllocStatus, BlockSpaceManager
 from vllm.core.policy import PolicyFactory
 from vllm.logger import init_logger
-from vllm.sequence import (Sequence, SequenceData, SequenceGroup,
-                           SequenceGroupMetadata, SequenceStatus)
+from vllm.sequence import (
+    Sequence,
+    SequenceData,
+    SequenceGroup,
+    SequenceGroupMetadata,
+    SequenceStatus,
+)
 
 logger = init_logger(__name__)
 
+DEFAULT_CACHE_KEY = 'DEFAULT'
 
 class PreemptionMode(enum.Enum):
     """Preemption modes.
@@ -22,12 +28,12 @@ class PreemptionMode(enum.Enum):
     recompute them when the sequences are resumed, treating the sequences as
     new prompts.
     """
+
     SWAP = enum.auto()
     RECOMPUTE = enum.auto()
 
 
 class SchedulerOutputs:
-
     def __init__(
         self,
         scheduled_seq_groups: Iterable[SequenceGroup],
@@ -50,12 +56,15 @@ class SchedulerOutputs:
 
     def is_empty(self) -> bool:
         # NOTE: We do not consider the ignored sequence groups.
-        return (not self.scheduled_seq_groups and not self.blocks_to_swap_in
-                and not self.blocks_to_swap_out and not self.blocks_to_copy)
+        return (
+            not self.scheduled_seq_groups
+            and not self.blocks_to_swap_in
+            and not self.blocks_to_swap_out
+            and not self.blocks_to_copy
+        )
 
 
 class Scheduler:
-
     def __init__(
         self,
         scheduler_config: SchedulerConfig,
@@ -64,8 +73,10 @@ class Scheduler:
         self.scheduler_config = scheduler_config
         self.cache_config = cache_config
 
-        self.prompt_limit = min(self.scheduler_config.max_model_len,
-                                self.scheduler_config.max_num_batched_tokens)
+        self.prompt_limit = min(
+            self.scheduler_config.max_model_len,
+            self.scheduler_config.max_num_batched_tokens,
+        )
 
         # Instantiate the scheduling policy.
         self.policy = PolicyFactory.get_policy(policy_name="fcfs")
@@ -74,7 +85,8 @@ class Scheduler:
             block_size=self.cache_config.block_size,
             num_gpu_blocks=self.cache_config.num_gpu_blocks,
             num_cpu_blocks=self.cache_config.num_cpu_blocks,
-            sliding_window=self.cache_config.sliding_window)
+            sliding_window=self.cache_config.sliding_window,
+        )
 
         # Sequence groups in the WAITING state.
         self.waiting: Deque[SequenceGroup] = deque()
@@ -104,7 +116,7 @@ class Scheduler:
             request_id: The ID(s) of the sequence group to abort.
         """
         if isinstance(request_id, str):
-            request_id = (request_id, )
+            request_id = (request_id,)
         request_ids = set(request_id)
         # TODO move finished sequences to cache
         for state_queue in [self.waiting, self.running, self.swapped]:
@@ -118,14 +130,14 @@ class Scheduler:
                     # Appending aborted group into pending list.
                     aborted_groups.append(seq_group)
                     request_ids.remove(seq_group.request_id)
-            
+
             for aborted_group in aborted_groups:
                 # Remove the sequence group from the state queue.
                 state_queue.remove(aborted_group)
                 if self.cache_config.enable_cross_request_kv_cache_sharing:
                     self.cached.append(aborted_group)
 
-                for seq in seq_group.get_seqs():
+                for seq in aborted_group.get_seqs():
                     if seq.is_finished():
                         continue
                     seq.status = SequenceStatus.FINISHED_ABORTED
@@ -143,7 +155,8 @@ class Scheduler:
         blocks_to_swap_in: Dict[int, int] = {}
         blocks_to_swap_out: Dict[int, int] = {}
         blocks_to_copy: Dict[int, List[int]] = {}
-        input_ids_to_sequence: Dict[Tuple, Tuple[Sequence, SequenceGroup]] = {}
+        # {cache key -> {input_ids -> (sequence, sequence_group)}}
+        input_ids_to_sequence: Dict[str, Dict[Tuple, Tuple[Sequence, SequenceGroup]]] = {}
         # Fix the current time.
         now = time.monotonic()
         ttl = 10.0
@@ -151,21 +164,26 @@ class Scheduler:
 
         for seq_group in self.cached:
             if seq_group.arrival_time < now - ttl:
-                print(f'Evicting seq group with arrival time {seq_group.arrival_time:4f}, now {now:4f} with difference {now - seq_group.arrival_time:4f}')
+                print(
+                    f"Evicting seq group with arrival time {seq_group.arrival_time:4f}, now {now:4f} with difference {now - seq_group.arrival_time:4f}"
+                )
                 to_evict.append(seq_group)
             else:
                 cached_sequences = seq_group.get_seqs()
+                cache_key = seq_group.sampling_params.cache_key or DEFAULT_CACHE_KEY
                 for cached_seq in cached_sequences:
                     token_ids = cached_seq.get_token_ids()
-                    input_ids_to_sequence[tuple(token_ids)] = (cached_seq, seq_group)
+                    if cache_key not in input_ids_to_sequence:
+                        input_ids_to_sequence[cache_key] = {}
+                    input_ids_to_sequence[cache_key][tuple(token_ids)] = (cached_seq, seq_group)
 
         for evict_group in to_evict:
             self.cached.remove(evict_group)
-            print('Evicting seq group')
+            print("Evicting seq group")
             for seq in evict_group.get_seqs():
                 self.free_seq(seq)
-        if len(input_ids_to_sequence) > 0:
-            print(f'There are {len(input_ids_to_sequence)} cached sequences')
+        for cache_key in input_ids_to_sequence:
+            print(f"There are {len(input_ids_to_sequence[cache_key])} cached sequences for cache key {cache_key}")
 
         # Join waiting sequences if possible.
         if not self.swapped:
@@ -173,8 +191,9 @@ class Scheduler:
             scheduled: List[SequenceGroup] = []
             # The total number of sequences on the fly, including the
             # requests in the generation phase.
-            num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
-                                for seq_group in self.running)
+            num_curr_seqs = sum(
+                seq_group.get_max_num_running_seqs() for seq_group in self.running
+            )
             seq_lens: List[int] = []
 
             # Optimization: We do not sort the waiting queue since the preempted
@@ -183,16 +202,16 @@ class Scheduler:
             while self.waiting:
                 seq_group = self.waiting[0]
 
-                waiting_seqs = seq_group.get_seqs(
-                    status=SequenceStatus.WAITING)
+                waiting_seqs = seq_group.get_seqs(status=SequenceStatus.WAITING)
                 assert len(waiting_seqs) == 1, (
-                    "Waiting sequence group should have only one prompt "
-                    "sequence.")
+                    "Waiting sequence group should have only one prompt " "sequence."
+                )
                 num_prompt_tokens = waiting_seqs[0].get_len()
                 if num_prompt_tokens > self.prompt_limit:
                     logger.warning(
                         f"Input prompt ({num_prompt_tokens} tokens) is too long"
-                        f" and exceeds limit of {self.prompt_limit}")
+                        f" and exceeds limit of {self.prompt_limit}"
+                    )
                     for seq in waiting_seqs:
                         seq.status = SequenceStatus.FINISHED_IGNORED
                     ignored_seq_groups.append(seq_group)
@@ -206,7 +225,8 @@ class Scheduler:
                 elif can_allocate == AllocStatus.NEVER:
                     logger.warning(
                         f"Input prompt ({num_prompt_tokens} tokens) is too long"
-                        f" and exceeds the capacity of block_manager")
+                        f" and exceeds the capacity of block_manager"
+                    )
                     for seq in waiting_seqs:
                         seq.status = SequenceStatus.FINISHED_IGNORED
                     ignored_seq_groups.append(seq_group)
@@ -216,15 +236,13 @@ class Scheduler:
                 # If the number of batched tokens exceeds the limit, stop.
                 new_seq_lens = seq_lens + [num_prompt_tokens]
                 num_batched_tokens = len(new_seq_lens) * max(new_seq_lens)
-                if (num_batched_tokens >
-                        self.scheduler_config.max_num_batched_tokens):
+                if num_batched_tokens > self.scheduler_config.max_num_batched_tokens:
                     break
 
                 # The total number of sequences in the RUNNING state should not
                 # exceed the maximum number of sequences.
                 num_new_seqs = seq_group.get_max_num_running_seqs()
-                if (num_curr_seqs + num_new_seqs >
-                        self.scheduler_config.max_num_seqs):
+                if num_curr_seqs + num_new_seqs > self.scheduler_config.max_num_seqs:
                     break
 
                 num_paddings = num_batched_tokens - sum(new_seq_lens)
@@ -239,41 +257,70 @@ class Scheduler:
                 scheduled.append(seq_group)
 
             if scheduled and self.cache_config.enable_cross_request_kv_cache_sharing:
-
                 sequences_to_copy: List[Tuple[Sequence, Sequence]] = []
                 sequence_groups_to_remove: Set[SequenceGroup] = set()
                 sequence_groups_to_copy: List[Tuple[SequenceGroup, SequenceGroup]] = []
                 for seq_group in scheduled:
                     waiting_sequences = seq_group.get_seqs()
+                    cache_key = seq_group.sampling_params.cache_key or DEFAULT_CACHE_KEY
+                    input_ids_to_cached_sequence = input_ids_to_sequence.get(cache_key, {})
                     for waiting_seq in waiting_sequences:
                         waiting_seq_token_ids = tuple(waiting_seq.data.prompt_token_ids)
-                        for cached_input_ids, (cached_seq, cached_sequence_group) in input_ids_to_sequence.items():
-                            hits = [c == w for c, w in zip(cached_input_ids, waiting_seq_token_ids)]
-                            print('Hits', sum(hits), len(hits), 'len(waiting)', len(waiting_seq_token_ids), 'len(cache)', len(cached_input_ids))
+                        for cached_input_ids, (
+                            cached_seq,
+                            cached_sequence_group,
+                        ) in input_ids_to_cached_sequence.items():
+                            hits = [
+                                c == w
+                                for c, w in zip(cached_input_ids, waiting_seq_token_ids)
+                            ]
+                            print(
+                                "Hits",
+                                sum(hits),
+                                len(hits),
+                                "len(waiting)",
+                                len(waiting_seq_token_ids),
+                                "len(cache)",
+                                len(cached_input_ids),
+                            )
                             if all(hits) and len(hits) == len(waiting_seq_token_ids):
-                                # we only care about a cache hit if the stuff we are about to decode is exactly 
+                                # we only care about a cache hit if the stuff we are about to decode is exactly
                                 # covered by the stuff we have cached.
-                                print('Potential cache hit of length ', len(hits))
+                                print("Potential cache hit of length ", len(hits))
                                 sequences_to_copy.append((cached_seq, waiting_seq))
-                                sequence_groups_to_copy.append((cached_sequence_group, seq_group))
+                                sequence_groups_to_copy.append(
+                                    (cached_sequence_group, seq_group)
+                                )
                                 sequence_groups_to_remove.add(seq_group)
 
                 # Copy the cached sequence kv cache directly to the waiting sequence.
                 # We should make sure non-full blocks are not read by PagedAttention
-                for from_sequence, to_sequence in sequences_to_copy: 
-                    from_seq_physical_blocks = self.block_manager.block_tables[from_sequence.seq_id]
-                    to_seq_physical_blocks = self.block_manager.block_tables[to_sequence.seq_id]
-                    for physical_from_block, physical_to_block in zip(from_seq_physical_blocks, to_seq_physical_blocks):
+                for from_sequence, to_sequence in sequences_to_copy:
+                    from_seq_physical_blocks = self.block_manager.block_tables[
+                        from_sequence.seq_id
+                    ]
+                    to_seq_physical_blocks = self.block_manager.block_tables[
+                        to_sequence.seq_id
+                    ]
+                    for physical_from_block, physical_to_block in zip(
+                        from_seq_physical_blocks, to_seq_physical_blocks
+                    ):
                         if physical_from_block.block_number not in blocks_to_copy:
                             blocks_to_copy[physical_from_block.block_number] = []
-                        blocks_to_copy[physical_from_block.block_number].append(physical_to_block.block_number)
+                        blocks_to_copy[physical_from_block.block_number].append(
+                            physical_to_block.block_number
+                        )
 
                 # copy the prompt logprobs from the cached sequence group to the waiting sequence group
                 # this is because the waiting group never goes into the prefill stage of vllm where prompt logp are produced
                 for from_sequence_group, to_sequence_group in sequence_groups_to_copy:
                     # TODO ideally would handle this case more elegantly -- we should ignore this sequence group for caching and report
                     assert from_sequence_group.prompt_logprobs is not None
-                    to_sequence_group.prompt_logprobs = from_sequence_group.prompt_logprobs[:len(to_sequence_group.prompt_token_ids)]
+                    to_sequence_group.prompt_logprobs = (
+                        from_sequence_group.prompt_logprobs[
+                            : len(to_sequence_group.prompt_token_ids)
+                        ]
+                    )
                 # move the waiting sequence group to the RUNNING stage as if it just executed prefill
                 for group_to_unschedule in sequence_groups_to_remove:
                     scheduled.remove(group_to_unschedule)
@@ -283,13 +330,10 @@ class Scheduler:
                         self.running.append(group_to_unschedule)
 
             if scheduled or ignored_seq_groups:
-                print('Scheduling prompt run')
-                print([len(sg.get_seqs()) for sg in scheduled])
                 scheduler_outputs = SchedulerOutputs(
                     scheduled_seq_groups=scheduled,
                     prompt_run=True,
-                    num_batched_tokens=len(seq_lens) *
-                    max(seq_lens) if seq_lens else 0,
+                    num_batched_tokens=len(seq_lens) * max(seq_lens) if seq_lens else 0,
                     blocks_to_swap_in=blocks_to_swap_in,
                     blocks_to_swap_out=blocks_to_swap_out,
                     blocks_to_copy=blocks_to_copy,
@@ -329,8 +373,9 @@ class Scheduler:
         # Swap in the sequence groups in the SWAPPED state if possible.
         self.swapped = self.policy.sort_by_priority(now, self.swapped)
         if not preempted:
-            num_curr_seqs = sum(seq_group.get_max_num_running_seqs()
-                                for seq_group in self.running)
+            num_curr_seqs = sum(
+                seq_group.get_max_num_running_seqs() for seq_group in self.running
+            )
 
             while self.swapped:
                 seq_group = self.swapped[0]
@@ -341,8 +386,7 @@ class Scheduler:
                 # The total number of sequences in the RUNNING state should not
                 # exceed the maximum number of sequences.
                 num_new_seqs = seq_group.get_max_num_running_seqs()
-                if (num_curr_seqs + num_new_seqs >
-                        self.scheduler_config.max_num_seqs):
+                if num_curr_seqs + num_new_seqs > self.scheduler_config.max_num_seqs:
                     break
 
                 seq_group = self.swapped.popleft()
@@ -356,11 +400,9 @@ class Scheduler:
         # sequences in the RUNNING state.
         num_batched_tokens = sum(
             seq_group.num_seqs(status=SequenceStatus.RUNNING)
-            for seq_group in self.running)
+            for seq_group in self.running
+        )
 
-        print('Scheduling prompt run')
-        print([len(sg.get_seqs()) for sg in self.running])
-        print([sg.num_seqs(status=SequenceStatus.RUNNING) for sg in self.running])
         scheduler_outputs = SchedulerOutputs(
             scheduled_seq_groups=self.running,
             prompt_run=False,
@@ -407,8 +449,7 @@ class Scheduler:
 
     def free_finished_seq_groups(self) -> None:
         self.running = [
-            seq_group for seq_group in self.running
-            if not seq_group.is_finished()
+            seq_group for seq_group in self.running if not seq_group.is_finished()
         ]
 
     def _allocate(self, seq_group: SequenceGroup) -> None:
@@ -500,7 +541,8 @@ class Scheduler:
             # entire engine.
             raise RuntimeError(
                 "Aborted due to the lack of CPU swap space. Please increase "
-                "the swap space to avoid this error.")
+                "the swap space to avoid this error."
+            )
         mapping = self.block_manager.swap_out(seq_group)
         blocks_to_swap_out.update(mapping)
         for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):

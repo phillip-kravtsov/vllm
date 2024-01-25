@@ -106,6 +106,7 @@ class OpenAIServingCompletion(OpenAIServing):
                 prompt_logprobs=request.logprobs if request.echo else None,
                 skip_special_tokens=request.skip_special_tokens,
                 spaces_between_special_tokens=spaces_between_special_tokens,
+                cache_key=request.cache_key
             )
         except ValueError as e:
             return self.create_error_response(str(e))
